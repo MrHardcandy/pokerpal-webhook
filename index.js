@@ -43,10 +43,13 @@ app.post('/', async (req, res) => {
 
       // 调用 Qwen API
       const qwenRes = await axios.post(
-        'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
+        'https://api.bailian.aliyuncs.com/api/v1/services/aigc/chat/completions',  // 更新为正确的 Qwen API URL
         {
           model: 'qwen-max',
-          input: { prompt }
+          messages: [
+            { role: 'system', content: SYSTEM_PROMPT },
+            { role: 'user', content: userMessage }
+          ]
         },
         {
           headers: {
@@ -56,7 +59,7 @@ app.post('/', async (req, res) => {
         }
       );
 
-      const aiReply = qwenRes.data?.output?.text || 'すみません、ミサキはちょっと疲れてるみたいです...';
+      const aiReply = qwenRes.data?.choices[0]?.message?.content || 'すみません、ミサキはちょっと疲れてるみたいです...';
       console.log(`🤖 AI Reply: ${aiReply}`);
 
       // 回复 LINE 用户
