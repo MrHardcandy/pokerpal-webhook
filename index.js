@@ -5,80 +5,72 @@ const axios = require('axios');
 const app = express();
 const PORT = process.env.PORT || 10000;
 
-// 允许 LINE 发送 JSON 请求
+// 环境变量（也可以写在 .env 文件中）
+const CHANNEL_ACCESS_TOKEN = '你的LINE Channel Access Token';
+const QWEN_API_KEY = '你的通义千问 API KEY';
+
 app.use(bodyParser.json());
 
-// 默认 GET 路由
+// LINE webhook 测试 GET 路由（可选）
 app.get('/', (req, res) => {
-  res.send('PokerPal LINE Bot is alive! 🌸');
+  res.send('PokerPal LINE Bot is live!');
 });
 
-// 处理 LINE 的 webhook POST 请求
+// LINE webhook 主路由（必须是 POST /）
 app.post('/', async (req, res) => {
   try {
     const events = req.body.events;
-    if (!events || !Array.isArray(events)) return res.sendStatus(200);
+    if (!events || events.length === 0) return res.sendStatus(200);
 
-    for (const event of events) {
-      if (event.type === 'message' && event.message.type === 'text') {
-        const userMessage = event.message.text;
-        const replyToken = event.replyToken;
+    const replyToken = events[0].replyToken;
+    const userMessage = events[0].message.text;
 
-        // 用关西少女口吻构造提示词
-        const prompt = `
-你是一个20岁的日本女大学生，名字叫ミサキ，假期在大阪南波的一家德州扑克俱乐部打工。平时说话关西腔，喜欢和客人开玩笑，语气可爱但有点毒舌，喜欢用日语拟声词或小词结尾。现在有客人问你：「${userMessage}」，请你用关西少女的风格自然回复一段话（100字以内）。
-`;
-
-        // 调用通义千问 Qwen 模型
-        const qwenResponse = await axios.post(
-          'https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation',
-          {
-            model: 'qwen-max',
-            input: { prompt }
-          },
-          {
-            headers: {
-              Authorization: 'Bearer sk-0866867c038d457683f1aa3362577f7e', // ← 你的 Qwen API KEY
-              'Content-Type': 'application/json'
-            }
-          }
-        );
-
-        const aiReply =
-          qwenResponse?.data?.output?.text ||
-          'あら、ちょっと聞こえへんかったわ〜 もういっぺん言ってくれへん？';
-
-        // 发回 LINE 消息
-        await axios.post(
-          'https://api.line.me/v2/bot/message/reply',
-          {
-            replyToken: replyToken,
-            messages: [
-              {
-                type: 'text',
-                text: aiReply
-              }
-            ]
-          },
-          {
-            headers: {
-              Authorization:
-                'Bearer I4fRd0Y+VHL5Bu6YIrE3kKxVh2XFFboQMs86kVdboxQUTKetYn3ahT9GB4ODuDQzpLPWqjwe0CD8NMMRQHi+F4E8rGSymvpj+gMWNsJ4F3aMBZjxFfDslUeuVovhEuo7l/Dxjul2tQLTkc7H+P2HLgdB04t89/10/w1cDnyilFU=', // ← 你的 LINE Channel Access Token
-              'Content-Type': 'application/json'
-            }
-          }
-        );
+    // 调用 Qwen API
+    const response = await axios.post(
+      'https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation',
+      {
+        model: 'qwen-max',
+        input: {
+          prompt: `你是一个在大阪南波PokerPal俱乐部打工的20岁大学生女孩，讲一口关西腔，平时调皮又爱开玩笑，但在德州扑克技巧上经验老道。现在和玩家对话：${userMessage}`
+        }
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${QWEN_API_KEY}`,
+          'Content-Type': 'application/json',
+        }
       }
-    }
+    );
+
+    const aiReply = response.data.output.text;
+
+    // 回复 LINE 用户
+    await axios.post(
+      'https://api.line.me/v2/bot/message/reply',
+      {
+        replyToken,
+        messages: [
+          {
+            type: 'text',
+            text: aiReply,
+          }
+        ]
+      },
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${CHANNEL_ACCESS_TOKEN}`,
+        }
+      }
+    );
 
     res.sendStatus(200);
   } catch (error) {
-    console.error('[Webhook Error]', error.message);
+    console.error('LINE Bot Error:', error.response?.data || error.message);
     res.sendStatus(500);
   }
 });
 
-// 启动服务
 app.listen(PORT, () => {
-  console.log(`🚀 LINE bot webhook running on port ${PORT}`);
+  console.log(`Server running on port ${PORT}`);
 });
