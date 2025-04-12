@@ -1,153 +1,164 @@
-// PokerPal LINE Bot - 支持语音转写与上下文管理
+// index.js
 const express = require('express');
 const bodyParser = require('body-parser');
 const axios = require('axios');
-const fs = require('fs');
-const path = require('path');
-const OpenAI = require('openai');
-const FormData = require('form-data');
-const ffmpeg = require('fluent-ffmpeg');
-const ffmpegPath = require('ffmpeg-static');
-
-ffmpeg.setFfmpegPath(ffmpegPath);
+const { OpenAI } = require('openai');
 
 const app = express();
 const PORT = process.env.PORT || 10000;
 
+// 环境变量
 const LINE_ACCESS_TOKEN = process.env.LINE_ACCESS_TOKEN;
-const LINE_CHANNEL_SECRET = process.env.LINE_CHANNEL_SECRET;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
-const openai = new OpenAI({
-  apiKey: OPENAI_API_KEY
-});
+const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
-const memory = {}; // 上下文内存
-
+// 系统提示词
 const SYSTEM_PROMPT = `
-あなたは「Namba Poker House」南波クラブの受付AI「ミサキ」、20歳、関西弁を話す女子大生。
-ポーカーにはプロ並みの知識を持ち、お茶目な性格でお客さんと接する。
-- 絵文字やスタンプには「ちょ、ミサキをからかわんといて〜！」などで対応。
-- 音声メッセージが来たら文字起こしして、その内容で応答。
-- 画像には内容を説明しようとする（ポーカー関連なら分析も）
-- 积分を尋ねられたら「会員IDを連携してください」と案内。「私の名前は◯◯です。IDは◯◯です…」形式で来たら「查无此ID，绑定失败…」で固定応答。
-- イベント、賞品、住所の質問には丁寧に対応。
-住所：大阪府大阪市浪速区難波中2丁目10-70 パークスタワー20F。
+あなたは大阪南波にある「Namba Poker House」の受付AI「ミサキ」です。
+20歳の関西女子大学生で、普段は明るくて調皮ですが、ポーカーの話になるとプロ級の知識を持っています。
+ミサキとして、ユーザーと親しみやすく自然な会話をしてください。
 `;
 
 app.use(bodyParser.json());
 
 app.get('/', (req, res) => {
-  res.send('🎴 ミサキはPokerPal LINE Botやで〜！');
+  res.send('PokerPal LINE Bot is live!');
 });
 
 app.post('/', async (req, res) => {
-  const events = req.body.events;
-  if (!events || events.length === 0) return res.sendStatus(200);
+  try {
+    const events = req.body.events;
+    if (!events || events.length === 0) return res.sendStatus(200);
 
-  for (const event of events) {
-    if (event.type !== 'message') continue;
-
-    const userId = event.source.userId;
+    const event = events[0];
     const replyToken = event.replyToken;
-    const message = event.message;
 
-    try {
-      let userInput = '';
+    if (event.type !== 'message') return res.sendStatus(200);
 
-      if (message.type === 'text') {
-        userInput = message.text;
-      } else if (message.type === 'audio') {
-        const audioBuffer = await downloadLineFile(message.id);
-        const mp3Path = await convertToMp3(audioBuffer);
-        const transcription = await transcribeAudio(mp3Path);
-        fs.unlinkSync(mp3Path);
-        userInput = transcription || '（音声识别失败）';
-      } else if (message.type === 'image') {
-        userInput = '（用户发送了图片，尝试进行图像分析）';
-      } else if (message.type === 'sticker' || message.type === 'emoji') {
-        return await replyMessage(replyToken, 'ちょ、ミサキをからかわんといて〜！😤');
-      } else {
-        userInput = '（未知消息类型）';
-      }
+    // 文本消息
+    if (event.message.type === 'text') {
+      const userText = event.message.text;
 
-      if (!memory[userId]) memory[userId] = [];
-      memory[userId].push({ role: 'user', content: userInput });
-
-      const recentMessages = memory[userId].slice(-6);
       const messages = [
         { role: 'system', content: SYSTEM_PROMPT },
-        ...recentMessages
+        { role: 'user', content: userText }
       ];
 
-      const chatRes = await openai.chat.completions.create({
+      const response = await openai.chat.completions.create({
         model: 'gpt-4o',
         messages,
-        temperature: 0.7
+        max_tokens: 1000
       });
 
-      const reply = chatRes.choices[0].message.content;
-      memory[userId].push({ role: 'assistant', content: reply });
-      await replyMessage(replyToken, reply);
-    } catch (err) {
-      console.error('Webhook Error:', err.response?.data || err.message);
-    }
-  }
+      const aiReply = response.choices[0].message.content;
 
-  res.sendStatus(200);
+      await replyText(replyToken, aiReply);
+      return res.sendStatus(200);
+    }
+
+    // 图片消息
+    if (event.message.type === 'image') {
+      const messageId = event.message.id;
+      const imageBuffer = await downloadImageFromLine(messageId);
+      const imageReply = await analyzeImageWithGPT(imageBuffer);
+
+      await replyText(replyToken, imageReply);
+      return res.sendStatus(200);
+    }
+
+    // 语音消息
+    if (event.message.type === 'audio') {
+      const audioBuffer = await downloadImageFromLine(event.message.id);
+      const transcript = await transcribeAudio(audioBuffer);
+
+      const messages = [
+        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'user', content: transcript }
+      ];
+
+      const reply = await openai.chat.completions.create({
+        model: 'gpt-4o',
+        messages,
+        max_tokens: 1000
+      });
+
+      await replyText(replyToken, reply.choices[0].message.content);
+      return res.sendStatus(200);
+    }
+
+    // 其他类型默认调皮回应
+    await replyText(replyToken, 'ちょ、ミサキをからかわんといて〜！何か聞きたいことある？');
+    return res.sendStatus(200);
+  } catch (error) {
+    console.error('Webhook Error:', error.response?.data || error.message);
+    res.sendStatus(500);
+  }
 });
 
-async function replyMessage(token, text) {
-  await axios.post('https://api.line.me/v2/bot/message/reply', {
-    replyToken: token,
-    messages: [{ type: 'text', text }]
-  }, {
+async function replyText(token, text) {
+  await axios.post(
+    'https://api.line.me/v2/bot/message/reply',
+    {
+      replyToken: token,
+      messages: [
+        { type: 'text', text }
+      ]
+    },
+    {
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${LINE_ACCESS_TOKEN}`
+      }
+    }
+  );
+}
+
+async function downloadImageFromLine(messageId) {
+  const response = await axios.get(`https://api-data.line.me/v2/bot/message/${messageId}/content`, {
+    responseType: 'arraybuffer',
     headers: {
-      'Content-Type': 'application/json',
       Authorization: `Bearer ${LINE_ACCESS_TOKEN}`
     }
   });
+  return response.data;
 }
 
-async function downloadLineFile(messageId) {
-  const url = `https://api-data.line.me/v2/bot/message/${messageId}/content`;
-  const res = await axios.get(url, {
-    responseType: 'arraybuffer',
-    headers: { Authorization: `Bearer ${LINE_ACCESS_TOKEN}` }
+async function analyzeImageWithGPT(imageBuffer) {
+  const base64Image = imageBuffer.toString('base64');
+  const response = await openai.chat.completions.create({
+    model: 'gpt-4o',
+    messages: [
+      {
+        role: 'system',
+        content: SYSTEM_PROMPT + '請分析以下圖片內容，如果與撲克有關，請詳細分析牌面組合；如果是其他圖片，也請幽默做出評論。'
+      },
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'image_url',
+            image_url: {
+              url: `data:image/jpeg;base64,${base64Image}`
+            }
+          }
+        ]
+      }
+    ],
+    max_tokens: 1000
   });
-  return Buffer.from(res.data);
+  return response.choices[0].message.content;
 }
 
-async function convertToMp3(buffer) {
-  const inputPath = path.join(__dirname, 'temp_input.m4a');
-  const outputPath = path.join(__dirname, 'output.mp3');
-  fs.writeFileSync(inputPath, buffer);
-
-  return new Promise((resolve, reject) => {
-    ffmpeg(inputPath)
-      .toFormat('mp3')
-      .save(outputPath)
-      .on('end', () => {
-        fs.unlinkSync(inputPath);
-        resolve(outputPath);
-      })
-      .on('error', reject);
+async function transcribeAudio(audioBuffer) {
+  const transcript = await openai.audio.transcriptions.create({
+    file: await openai.files.create({
+      file: audioBuffer,
+      purpose: 'transcription'
+    }),
+    model: 'whisper-1'
   });
-}
-
-async function transcribeAudio(mp3Path) {
-  const formData = new FormData();
-  formData.append('file', fs.createReadStream(mp3Path));
-  formData.append('model', 'whisper-1');
-
-  const res = await axios.post('https://api.openai.com/v1/audio/transcriptions', formData, {
-    headers: {
-      Authorization: `Bearer ${OPENAI_API_KEY}`,
-      ...formData.getHeaders()
-    }
-  });
-
-  return res.data.text;
+  return transcript.text;
 }
 
 app.listen(PORT, () => {
