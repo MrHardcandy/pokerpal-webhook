@@ -1,15 +1,19 @@
 const express = require('express');
 const bodyParser = require('body-parser');
 const axios = require('axios');
+require('dotenv').config(); // 加载环境变量
 
 const app = express();
 const PORT = process.env.PORT || 10000;
 
-// 从环境变量读取（推荐在 Render 上配置，否则直接替换为实际值）
-const CHANNEL_ACCESS_TOKEN = process.env.LINE_ACCESS_TOKEN || 'I4fRd0Y+VHL5Bu6YIrE3kKxVh2XFFboQMs86kVdboxQUTKetYn3ahT9GB4ODuDQzpLPWqjwe0CD8NMMRQHi+F4E8rGSymvpj+gMWNsJ4F3aMBZjxFfDslUeuVovhEuo7l/DxjuI2tQLTkc7H+P2HLgdB04t89/1O/w1cDnyilFU=';
-const QWEN_API_KEY = process.env.QWEN_API_KEY || 'sk-0866867c038d457683f1aa3362577f7e';
+// 从环境变量读取密钥
+const CHANNEL_ACCESS_TOKEN = process.env.LINE_ACCESS_TOKEN;
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
-// 优化后的系统提示词，体现关西少女风格和俱乐部氛围
+// 使用 GPT-4o mini 模型
+const MODEL = 'gpt-4o';
+
+// 系统提示词（关西少女人设）
 const SYSTEM_PROMPT = `
 あなたは大阪南波にある「Namba Poker House」の受付AI「ミサキ」です。
 20歳の関西女子大学生で、休暇中はクラブでアルバイトしています。
@@ -18,34 +22,32 @@ const SYSTEM_PROMPT = `
 さらに、秘密の裏メニューで、同僚の小春の特製ドリンク情報をこっそり教えられることもあります。
 `;
 
-// 使用 body-parser 解析 JSON 请求体
+// 中间件
 app.use(bodyParser.json());
 
-// GET 路由，用于测试服务是否运行
+// 测试用 GET 路由
 app.get('/', (req, res) => {
   res.send('PokerPal LINE Bot is live!');
 });
 
-// POST 路由：处理来自 LINE 的 Webhook 请求
+// 主 Webhook 路由
 app.post('/', async (req, res) => {
   try {
     const events = req.body.events;
     if (!events || events.length === 0) return res.sendStatus(200);
 
     const event = events[0];
-    if (event.type === 'message' && event.message && event.message.type === 'text') {
-      const replyToken = event.replyToken;
+    if (event.type === 'message' && event.message.type === 'text') {
       const userMessage = event.message.text;
-      console.log(`📩 Received message: ${userMessage}`);
+      const replyToken = event.replyToken;
 
-      // 构造 prompt，包含系统提示词和用户输入
-      const prompt = `${SYSTEM_PROMPT}\n\nユーザー: ${userMessage}\nミサキ:`;
+      console.log('📩 收到用户消息：', userMessage);
 
-      // 调用 Qwen API
-      const qwenRes = await axios.post(
-        'https://api.bailian.aliyuncs.com/api/v1/services/aigc/chat/completions',  // 更新为正确的 Qwen API URL
+      // 请求 OpenAI GPT-4o mini
+      const openaiResponse = await axios.post(
+        'https://api.openai.com/v1/chat/completions',
         {
-          model: 'qwen-max',
+          model: MODEL,
           messages: [
             { role: 'system', content: SYSTEM_PROMPT },
             { role: 'user', content: userMessage }
@@ -53,23 +55,21 @@ app.post('/', async (req, res) => {
         },
         {
           headers: {
-            Authorization: `Bearer ${QWEN_API_KEY}`,
+            Authorization: `Bearer ${OPENAI_API_KEY}`,
             'Content-Type': 'application/json'
           }
         }
       );
 
-      const aiReply = qwenRes.data?.choices[0]?.message?.content || 'すみません、ミサキはちょっと疲れてるみたいです...';
-      console.log(`🤖 AI Reply: ${aiReply}`);
+      const aiReply = openaiResponse.data.choices[0].message.content || 'ミサキはちょっと疲れてるみたいやね…';
+      console.log('🤖 AI 回复：', aiReply);
 
-      // 回复 LINE 用户
+      // 通过 LINE API 回复用户
       await axios.post(
         'https://api.line.me/v2/bot/message/reply',
         {
           replyToken,
-          messages: [
-            { type: 'text', text: aiReply }
-          ]
+          messages: [{ type: 'text', text: aiReply }]
         },
         {
           headers: {
@@ -79,14 +79,15 @@ app.post('/', async (req, res) => {
         }
       );
     }
+
     res.sendStatus(200);
   } catch (error) {
-    console.error('Webhook Error:', error.response ? error.response.data : error.message);
+    console.error('❌ Webhook 错误：', error.response?.data || error.message);
     res.sendStatus(500);
   }
 });
 
 // 启动服务器
 app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`🚀 LINE GPT-4o Webhook 运行中，端口 ${PORT}`);
 });
