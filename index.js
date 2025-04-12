@@ -4,7 +4,7 @@ const bodyParser = require('body-parser');
 const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
-const { Configuration, OpenAIApi } = require('openai');
+const OpenAI = require('openai');
 const FormData = require('form-data');
 const ffmpeg = require('fluent-ffmpeg');
 const ffmpegPath = require('ffmpeg-static');
@@ -18,8 +18,9 @@ const LINE_ACCESS_TOKEN = process.env.LINE_ACCESS_TOKEN;
 const LINE_CHANNEL_SECRET = process.env.LINE_CHANNEL_SECRET;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
-const configuration = new Configuration({ apiKey: OPENAI_API_KEY });
-const openai = new OpenAIApi(configuration);
+const openai = new OpenAI({
+  apiKey: OPENAI_API_KEY
+});
 
 const memory = {}; // 上下文内存
 
@@ -79,13 +80,13 @@ app.post('/', async (req, res) => {
         ...recentMessages
       ];
 
-      const chatRes = await openai.createChatCompletion({
+      const chatRes = await openai.chat.completions.create({
         model: 'gpt-4o',
         messages,
         temperature: 0.7
       });
 
-      const reply = chatRes.data.choices[0].message.content;
+      const reply = chatRes.choices[0].message.content;
       memory[userId].push({ role: 'assistant', content: reply });
       await replyMessage(replyToken, reply);
     } catch (err) {
