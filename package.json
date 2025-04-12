@@ -1,19 +1,14 @@
 {
   "name": "pokerpal-webhook",
   "version": "1.0.0",
-  "description": "LINE webhook service with OpenAI GPT-4o mini integration",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "axios": "^1.6.0",
+    "axios": "^1.6.8",
     "body-parser": "^1.20.2",
-    "dotenv": "^16.3.1",
-    "express": "^4.18.2"
-  },
-  "engines": {
-    "node": ">=16.0.0"
-  },
-  "license": "MIT"
+    "express": "^4.18.2",
+    "openai": "^4.25.0"
+  }
 }
